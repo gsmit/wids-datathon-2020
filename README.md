@@ -8,4 +8,5 @@ Things to try out:
 - Feature selection
 - Ensembling (LightGBM + CatBoost + XGBoost)
 - Removing sparse features
+- Pseudo labeling
 - Neural network
