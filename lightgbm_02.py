@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import sklearn as sk
 import lightgbm as lgb
+import matplotlib.pyplot as plt
 
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import LabelEncoder
@@ -55,18 +56,32 @@ for feat in cat_feats:
 print('Finished count encoding features')
 
 # feature aggregations
-feat_set_a = ['urineoutput_apache', 'pre_icu_los_days', 'resprate_apache',
-              'd1_temp_min', 'd1_temp_max', 'd1_hco3_max', 'apache_4a_hospital_death_prob', 'd1_resprate_max',
-              'height', 'age', 'weight', 'bmi']
+# feat_set_a = ['urineoutput_apache', 'pre_icu_los_days', 'resprate_apache',
+#               'd1_temp_min', 'd1_temp_max', 'd1_hco3_max', 'apache_4a_hospital_death_prob', 'd1_resprate_max',]
+
+feat_set_a = ['apache_4a_hospital_death_prob',
+              'd1_lactate_min',
+              'd1_spo2_min',
+              'd1_heartrate_min',
+              'd1_sysbp_min',
+              'd1_platelets_min',
+              'd1_lactate_max',
+              'd1_sysbp_noninvasive_min',
+              'd1_resprate_min',
+              'd1_arterial_ph_min',
+              'd1_bun_min']
+
+feat_set_a = feat_set_a + ['d1_glucose_min']
+
 feat_set_b = cat_feats + ['icu_id', 'hospital_id']
 
 count = 1
 feat_set_len = len(feat_set_a) * len(feat_set_b)
 for feat_a in feat_set_a:
     for feat_b in feat_set_b:
-        feat_name_mean = feat_a + '_' + feat_b + '_agg_mean'
-        feat_name_diff = feat_a + '_' + feat_b + '_agg_diff'
-        feat_name_std = feat_a + '_' + feat_b + '_agg_std'
+        feat_name_mean = feat_a + '_' + feat_b + '_AGG_MEAN'
+        feat_name_diff = feat_a + '_' + feat_b + '_AGG_DIFF'
+        feat_name_std = feat_a + '_' + feat_b + '_AGG_STD'
 
         df[feat_name_mean] = df[feat_a] / df[[feat_a, feat_b]].copy().fillna(-999).groupby([feat_b])[feat_a].transform('mean')
         df[feat_name_diff] = df[feat_a] - df[[feat_a, feat_b]].copy().fillna(-999).groupby([feat_b])[feat_a].transform('mean')
@@ -96,41 +111,39 @@ print('Finished label encoding')
 # remove adversarial validation features that score high
 df = df.drop(columns=['icu_id', 'hospital_id'])
 
-# make a copy of df
 df_copy = df.copy()
 df = df_copy.copy()
 
 # important parameters
-# important parameters
-kfold_splits = 3
+kfold_splits = 5
 total_num_round = 2000
-early_num_round = 200
-num_leaves = 2 ** 6
-learning_rate = 0.008
+num_leaves = 2 ** 5
+learning_rate = 0.01
 
 params = {
     'boosting_type': 'gbdt',
     'boost_from_average': True,
     'objective': 'binary',
     'metric': {'auc'},
-    'is_unbalance': True,
-    'max_depth': 2 ** 5,
+    # 'is_unbalance': False,
+    'scale_pos_weight': 1.22,
+    'max_depth': 17,
     'num_leaves': num_leaves,
     'min_data_in_leaf': 500,
     'learning_rate': learning_rate,
-    'bagging_fraction': 0.80,
+    # 'bagging_fraction': 0.75,
     # 'bagging_freq': 4,
     # 'bagging_seed': 42,
-    'feature_fraction': 0.80,
+    'feature_fraction': 0.50,
     # 'feature_fraction_seed': 42,
-    'lambda_l1': 4.0,
-    'lambda_l2': 4.0,
+    'lambda_l1': 4.17,
+    'lambda_l2': 4.64,
     'seed': 42,
     'verbosity': -1}
 
 columns = list(df.columns)
 
-columns_to_drop = ['hospital_death', 'encounter_id', 'is_train']
+columns_to_drop = ['hospital_death', 'encounter_id']
 columns_to_drop = [value for value in columns_to_drop if value in df.columns]
 
 X = df.loc[df['is_train'] == 1].drop(columns_to_drop, axis=1).copy()
@@ -148,6 +161,9 @@ kfold_prediction = np.zeros(len(sample_submission))
 kfold_importance = []
 kfold_auc_scores = []
 kfold_best_round = []
+
+feat_importance_split = []
+feat_importance_gain = []
 
 folds = KFold(n_splits=kfold_splits, shuffle=True, random_state=42)
 splits = folds.split(X, y)
@@ -172,12 +188,15 @@ for train_index, valid_index in splits:
     bst = lgb.train(
         params=params,
         train_set=lgb_train,
-        num_boost_round=total_num_round,
-        early_stopping_rounds=early_num_round,
+        num_boost_round=2000,
+        early_stopping_rounds=200,
         valid_sets=[lgb_valid],
         valid_names=['VALID'],
         categorical_feature=cat_feats,
-        verbose_eval=50)
+        verbose_eval=20)
+
+    feat_importance_split.append(bst.feature_importance(importance_type='split'))
+    feat_importance_gain.append(bst.feature_importance(importance_type='gain'))
 
     prediction = bst.predict(X_test)
     kfold_prediction = kfold_prediction + (prediction / kfold_splits)
@@ -209,3 +228,12 @@ sample_submission['hospital_death'] = kfold_prediction
 sample_submission.to_csv(
     PATH + '/submissions/light_gbm_{}_mean_{}_std_{}_feats_{}_lr_{}_leaves_{}.csv'.format(version, date, auc_score_mean, auc_score_std, num_feats, learning_rate, num_leaves), index=False)
 print('Finished saving mean of predictions')
+
+#%%
+lgb.plot_importance(bst, importance_type='split', max_num_features=75, figsize=(12, 12))
+plt.title('Feature importance (by SPLIT)')
+plt.show()
+
+lgb.plot_importance(bst, importance_type='gain', max_num_features=75, figsize=(12, 12))
+plt.title('Feature importance (by GAIN)')
+plt.show()
