@@ -1,4 +1,5 @@
 import time
+import random
 import numpy as np
 import pandas as pd
 import sklearn as sk
@@ -8,9 +9,11 @@ import tensorflow as tf
 
 from keras.models import Sequential
 from keras.layers import Dense, Dropout
+from keras.optimizers import SGD
 
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import TimeSeriesSplit, KFold, StratifiedKFold
 
@@ -20,8 +23,8 @@ version = '01'
 date = time.strftime('%Y%m%d_%H%M')
 
 
-def auroc(y_true, y_pred):
-    return tf.py_func(roc_auc_score, (y_true, y_pred), tf.double)
+def auroc(y_true, y_prediction):
+    return tf.py_func(roc_auc_score, (y_true, y_prediction), tf.double)
 
 
 # load train and test set
@@ -57,8 +60,33 @@ df["apache_4a_icu_death_prob"] = df["apache_4a_icu_death_prob"].replace({-1: np.
 cat_feats = df.select_dtypes(include=['object', 'category'])
 cat_feats = cat_feats.columns.tolist()
 
+# feature aggregations
+feat_set_a = ['apache_4a_hospital_death_prob', 'apache_4a_icu_death_prob']
+feat_set_a = set(feat_set_a)  # make sure values are unique
+feat_set_b = cat_feats
+
+count = 1
+feat_set_len = len(feat_set_a) * len(feat_set_b)
+for feat_a in feat_set_a:
+    for feat_b in feat_set_b:
+        feat_name_mean = feat_a + '_' + feat_b + '_AGG_MEAN'
+        feat_name_diff = feat_a + '_' + feat_b + '_AGG_DIFF'
+        feat_name_std = feat_a + '_' + feat_b + '_AGG_STD'
+
+        df[feat_name_mean] = df[feat_a] / df[[feat_a, feat_b]].copy().fillna(-999).groupby([feat_b])[feat_a].transform('mean')
+        df[feat_name_diff] = df[feat_a] - df[[feat_a, feat_b]].copy().fillna(-999).groupby([feat_b])[feat_a].transform('mean')
+        df[feat_name_std] = df[feat_a] / df[[feat_a, feat_b]].copy().fillna(-999).groupby([feat_b])[feat_a].transform('std')
+
+        if (count % 1 == 0) or (count == feat_set_len):
+            print('Finished aggregating feature', count, 'of', feat_set_len, '({} + {})'.format(feat_a, feat_b))
+
+        count += 1
+
+print('Finished creating aggregated features', '\n')
+print('Number of total features:', len(df.columns))
+
 columns = list(df.columns)
-columns_to_drop = ['hospital_death', 'hospital_id', 'encounter_id', 'readmission_status']
+columns_to_drop = ['hospital_death', 'hospital_id', 'icu_id', 'encounter_id', 'readmission_status']
 columns_to_drop = [value for value in columns_to_drop if value in df.columns]
 cat_feats = [value for value in cat_feats if value not in columns_to_drop]
 
@@ -71,7 +99,7 @@ for feat in cat_feats:
 drop_count = 1
 for feat in df.columns:
     pct_missing = df[feat].isna().sum() / len(df[feat])
-    if (pct_missing >= 0.25) and (feat != 'hospital_death'):
+    if (pct_missing >= 0.75) and (feat != 'hospital_death'):
         df = df.drop(columns=[feat])
         print('Dropped column {} ({}% missing)'.format(feat, round(pct_missing * 100, 3)))
         drop_count += 1
@@ -83,11 +111,21 @@ for feat in df.columns:
 print()
 print(df.shape)
 
+# standardize features
+for feat in df.columns:
+    scaler = MinMaxScaler()
+    scaler.fit(df[[feat]].values)
+    df[feat] = scaler.transform(df[[feat]].values)
+print('Finished standardizing features')
 
 X = df.loc[df['is_train'] == 1].drop(columns_to_drop, axis=1).copy().reset_index(drop=True)
 y = df.loc[df['is_train'] == 1]['hospital_death'].copy().reset_index(drop=True)
 X_index = df.loc[df['is_train'] == 1].drop(columns_to_drop, axis=1).index.tolist()
 X_test = df.loc[df['is_train'] == 0].drop(columns_to_drop, axis=1).copy().reset_index(drop=True)
+X_0 = df.loc[(df['is_train'] == 1) & (df['hospital_death'] == 0)].drop(columns_to_drop, axis=1).copy().reset_index(drop=True)
+y_0 = df.loc[(df['is_train'] == 1) & (df['hospital_death'] == 0)]['hospital_death'].copy().reset_index(drop=True)
+X_1 = df.loc[(df['is_train'] == 1) & (df['hospital_death'] == 1)].drop(columns_to_drop, axis=1).copy().reset_index(drop=True)
+y_1 = df.loc[(df['is_train'] == 1) & (df['hospital_death'] == 1)]['hospital_death'].copy().reset_index(drop=True)
 del df
 
 # filter categorical features
@@ -98,17 +136,43 @@ sample_submission = pd.read_csv(PATH + '/data/solution_template.csv')
 kfold_prediction = np.zeros(len(sample_submission))
 kfold_auc_scores = []
 
-feat_importance_split = []
-feat_importance_gain = []
-
 kfold_splits = 5
+# folds = KFold(n_splits=kfold_splits, shuffle=True, random_state=42)
+# splits = folds.split(X_1, y_1)
+
 folds = KFold(n_splits=kfold_splits, shuffle=True, random_state=42)
 splits = folds.split(X, y)
+
+FINAL_PREDICT = False
 
 # create kfold splits
 fold_num = 1
 for train_index, valid_index in splits:
     fold_start = time.time()
+
+    # random.seed(a=fold_num)
+    # sample_factor = len(X_1) * 2
+    # sample_indices = random.sample([i for i in range(len(X_0))], sample_factor)
+    # X_0_sample = X_0.iloc[sample_indices].copy().reset_index(drop=True)
+    # y_0_sample = y_0.iloc[sample_indices].copy().reset_index(drop=True)
+    #
+    # X_0_train = X_0_sample.iloc[train_index]
+    # X_0_valid = X_0_sample.iloc[valid_index]
+    # X_1_train = X_1.iloc[train_index]
+    # X_1_valid = X_1.iloc[valid_index]
+    #
+    # y_0_train = y_0_sample.iloc[train_index]
+    # y_0_valid = y_0_sample.iloc[valid_index]
+    # y_1_train = y_1.iloc[train_index]
+    # y_1_valid = y_1.iloc[valid_index]
+    #
+    # X_train = pd.concat([X_0_train, X_1_train], ignore_index=True)
+    # X_valid = pd.concat([X_0_valid, X_1_valid], ignore_index=True)
+    # y_train = pd.concat([y_0_train, y_1_train], ignore_index=True)
+    # y_valid = pd.concat([y_0_valid, y_1_valid], ignore_index=True)
+    # del X_0_train, X_0_valid, X_1_train, X_1_valid
+    # del y_0_train, y_0_valid, y_1_train, y_1_valid
+
     X_train, X_valid = X.iloc[train_index], X.iloc[valid_index]
     y_train, y_valid = y.iloc[train_index], y.iloc[valid_index]
 
@@ -120,51 +184,46 @@ for train_index, valid_index in splits:
     print('# of features:', len(X_train.columns))
 
     input_dim = X_train.shape[1]
-
     model = Sequential()
     model.add(Dense(128, input_dim=input_dim, activation='relu'))
-    model.add(Dropout(0.5))
+    model.add(Dropout(0.45))
     model.add(Dense(128, activation='relu'))
-    model.add(Dropout(0.5))
+    model.add(Dropout(0.45))
     model.add(Dense(1, activation='sigmoid'))
 
-    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[auroc])
+    sgd = SGD(lr=1.0)
+    model.compile(loss='binary_crossentropy', optimizer=sgd, metrics=[auroc])
 
-    model.fit(X_train, y_train, epochs=5, batch_size=128)
-    score = model.evaluate(X_valid, y_valid, batch_size=128)[1]
+    model.fit(X_train, y_train, epochs=125, batch_size=4096, verbose=2)
+    score = model.evaluate(X_valid, y_valid, batch_size=4096)[1]
     print('Score:', score)
 
     y_pred = model.predict(X_valid)
     auc_score = roc_auc_score(y_valid, y_pred)
-
-    prediction = model.predict(X_test)
-    kfold_prediction = kfold_prediction + (prediction / kfold_splits)
-
     kfold_auc_scores.append(auc_score)
 
-    del prediction
+    if FINAL_PREDICT:
+        prediction = model.predict(X_test)
+        kfold_prediction = kfold_prediction + (prediction / kfold_splits)
+        del prediction
+
     fold_duration = time.time() - fold_start
-    print('Fold {} AUC: {}'.format(fold_num, round(auc_score, 4)))
+    print('Fold {} AUC: {}'.format(fold_num, round(auc_score, 5)))
     print('Fold {} finished in {} minutes'.format(fold_num, int(round(fold_duration / 60, 0))), '\n')
 
     # start with next fold
     fold_num += 1
 
 # make sample submission file
-auc_score_mean = round(float(np.mean(kfold_auc_scores)), 4)
-auc_score_std = round(float(np.std(kfold_auc_scores)), 4)
+auc_score_mean = round(float(np.mean(kfold_auc_scores)), 5)
+auc_score_std = round(float(np.std(kfold_auc_scores)), 5)
 print('Average AUC score on CV:  {} (STD: {})'.format(auc_score_mean, auc_score_std))
 
+#%%
 num_feats = len(X_test.columns)
 kfold_prediction = np.clip(kfold_prediction, 0, 1)
 sample_submission['hospital_death'] = kfold_prediction
 
-#%%
 sample_submission.to_csv(
     PATH + '/submissions/keras_mlp_{}_mean_{}_std_{}_feats_{}.csv'.format(version, date, auc_score_mean, auc_score_std, num_feats), index=False)
 print('Finished saving mean of predictions')
-
-#%%
-auc_score = roc_auc_score(y_valid.values, y_pred)
-
-

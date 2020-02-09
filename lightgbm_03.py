@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
 
 PATH = 'C:/Users/GijsSmit/OneDrive - TU Eindhoven/kaggle/wids-datathon-2020'
 
-version = '02'
+version = '03'
 date = time.strftime('%Y%m%d_%H%M')
 
 # load train and test set
@@ -36,6 +36,15 @@ del train, test
 # extract categorical features
 cat_feats = df.select_dtypes(include=['object', 'category'])
 cat_feats = cat_feats.columns.tolist()
+
+cat_feats = cat_feats + ['ethnicity', 'gender', 'hospital_admit_source', 'icu_admit_source',
+             'icu_stay_type', 'icu_type', 'apache_3j_bodysystem', 'apache_2_bodysystem',
+             'elective_surgery', 'apache_post_operative', 'arf_apache', 'gcs_eyes_apache',
+             'gcs_motor_apache', 'gcs_unable_apache', 'gcs_verbal_apache', 'intubated_apache',
+             'ventilated_apache', 'aids', 'cirrhosis', 'diabetes_mellitus', 'hepatic_failure',
+             'immunosuppression', 'leukemia', 'lymphoma', 'solid_tumor_with_metastasis',
+             'icu_id', 'apache_3j_diagnosis', 'apache_2_diagnosis']
+cat_feats = list(set(cat_feats))
 
 # remove features with only 1 or only unique values
 df = df.drop(columns=['patient_id', 'readmission_status'], axis=1)
@@ -66,7 +75,9 @@ print('Finished count encoding features')
 
 # feature aggregations
 feat_set_a = [
+    'age',
     'apache_4a_hospital_death_prob',
+    'apache_4a_icu_death_prob',
     'd1_lactate_min',
     'd1_spo2_min',
     'd1_heartrate_min',
@@ -76,9 +87,10 @@ feat_set_a = [
     'd1_sysbp_noninvasive_min',
     'd1_resprate_min',
     'd1_resprate_max',
-    'd1_arterial_ph_min',
-    'd1_bun_min',
-    'd1_glucose_min']
+    # 'd1_arterial_ph_min',
+    # 'd1_bun_min',
+    # 'd1_glucose_min'
+]
 
 feat_set_a = set(feat_set_a)  # make sure values are unique
 
@@ -144,7 +156,7 @@ params = {
     # 'bagging_fraction': 0.75,
     # 'bagging_freq': 4,
     # 'bagging_seed': 42,
-    'feature_fraction': 0.50,
+    'feature_fraction': 0.60,
     # 'feature_fraction_seed': 42,
     'lambda_l1': 4.17,
     'lambda_l2': 4.64,
@@ -214,7 +226,7 @@ for train_index, valid_index in splits:
     importance = bst.feature_importance()
     kfold_importance.append(importance)
 
-    auc_score = round(bst.best_score['VALID']['auc'], 4)
+    auc_score = round(bst.best_score['VALID']['auc'], 5)
     kfold_auc_scores.append(auc_score)
 
     kfold_best_round.append(bst.best_iteration)
@@ -227,8 +239,8 @@ for train_index, valid_index in splits:
     fold_num += 1
 
 # make sample submission file
-auc_score_mean = round(float(np.mean(kfold_auc_scores)), 4)
-auc_score_std = round(float(np.std(kfold_auc_scores)), 4)
+auc_score_mean = round(float(np.mean(kfold_auc_scores)), 5)
+auc_score_std = round(float(np.std(kfold_auc_scores)), 5)
 print('Average AUC score on CV:  {} (STD: {})'.format(auc_score_mean, auc_score_std))
 
 num_feats = len(X_test.columns)
