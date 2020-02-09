@@ -3,10 +3,15 @@ import numpy as np
 import pandas as pd
 import sklearn as sk
 import lightgbm as lgb
+import matplotlib.pyplot as plt
 
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import TimeSeriesSplit, KFold, StratifiedKFold
+
+# disable lgb UserWarning
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning)
 
 PATH = 'C:/Users/GijsSmit/OneDrive - TU Eindhoven/kaggle/wids-datathon-2020'
 
@@ -96,10 +101,10 @@ df_copy = df.copy()
 df = df_copy.copy()
 
 # important parameters
-kfold_splits = 3
+kfold_splits = 5
 total_num_round = 2000
 num_leaves = 2 ** 5
-learning_rate = 0.008
+learning_rate = 0.01
 
 params = {
     'boosting_type': 'gbdt',
@@ -143,6 +148,9 @@ kfold_importance = []
 kfold_auc_scores = []
 kfold_best_round = []
 
+feat_importance_split = []
+feat_importance_gain = []
+
 folds = KFold(n_splits=kfold_splits, shuffle=True, random_state=42)
 splits = folds.split(X, y)
 
@@ -172,6 +180,9 @@ for train_index, valid_index in splits:
         valid_names=['VALID'],
         categorical_feature=cat_feats,
         verbose_eval=20)
+
+    feat_importance_split.append(bst.feature_importance(importance_type='split'))
+    feat_importance_gain.append(bst.feature_importance(importance_type='gain'))
 
     prediction = bst.predict(X_test)
     kfold_prediction = kfold_prediction + (prediction / kfold_splits)
@@ -203,3 +214,12 @@ sample_submission['hospital_death'] = kfold_prediction
 sample_submission.to_csv(
     PATH + '/submissions/light_gbm_{}_mean_{}_std_{}_feats_{}_lr_{}_leaves_{}.csv'.format(version, date, auc_score_mean, auc_score_std, num_feats, learning_rate, num_leaves), index=False)
 print('Finished saving mean of predictions')
+
+#%%
+lgb.plot_importance(bst, importance_type='split', max_num_features=30, figsize=(12, 6))
+plt.title('Feature importance (by SPLIT)')
+plt.show()
+
+lgb.plot_importance(bst, importance_type='gain', max_num_features=30, figsize=(12, 6))
+plt.title('Feature importance (by GAIN)')
+plt.show()
