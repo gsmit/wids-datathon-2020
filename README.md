@@ -1,7 +1,7 @@
 # WiDS Datathon 2020
 Repository for the WiDS Datathon 2020 hosted on Kaggle.
 
-Final score: 0.90737
+Final score: 0.90919
 Rank 84/951 (top 9%)
 
 Things we tried out:
