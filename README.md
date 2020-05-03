@@ -1,9 +1,8 @@
 # WiDS Datathon 2020
 Repository for the WiDS Datathon 2020 hosted on Kaggle.
 
-Final score: 0.90919
-
-Rank 84/951 (top 9%)
+## Results
+Final score: 0.90919 resukting in rank 84/951 (top 9%)
 
 Things we tried out:
 - Simple GBM models
@@ -14,4 +13,4 @@ Things we tried out:
 Things we still wanted to do:
 - Ensembling (LightGBM + CatBoost + XGBoost)
 - Pseudo labeling
-- MLP with categoricalembeddings
+- MLP with categorical embeddings
